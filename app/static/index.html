@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Budget Tracker</title>
+<style>
+  :root { --bg:#f6f7fb; --card:#fff; --text:#1a2233; --muted:#667085; --line:#e4e7ee;
+          --accent:#2563eb; --good:#15803d; --bad:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:960px; margin:0 auto; padding:24px 16px 48px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  h1 { font-size:22px; margin:0; } h2 { font-size:16px; margin:0 0 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-top:16px; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:16px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
+  .stat span { color:var(--muted); font-size:13px; } .stat b { display:block; font-size:22px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  form { display:flex; flex-wrap:wrap; gap:8px; }
+  input, select, button { font:inherit; padding:7px 10px; border:1px solid var(--line); border-radius:7px; background:#fff; }
+  input { min-width:0; flex:1 1 120px; }
+  button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; font-weight:600; }
+  button.link { background:none; color:var(--bad); border:none; padding:0 4px; font-weight:400; }
+  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin:4px 0 10px; }
+  .bar i { display:block; height:100%; background:var(--accent); }
+  .bar i.over { background:var(--bad); }
+  .row { display:flex; justify-content:space-between; font-size:14px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td, th { text-align:left; padding:7px 4px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
+  .income { color:var(--good); } .expense { color:var(--bad); } .muted { color:var(--muted); }
+  .error { color:var(--bad); font-size:13px; min-height:18px; margin-top:6px; }
+  @media (max-width:700px) { .grid, .stats { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Budget Tracker</h1>
+    <label>Month <input type="month" id="month"></label>
+  </header>
+
+  <section class="stats">
+    <div class="stat"><span>Income</span><b class="income" id="income">$0.00</b></div>
+    <div class="stat"><span>Expenses</span><b class="expense" id="expenses">$0.00</b></div>
+    <div class="stat"><span>Balance</span><b id="balance">$0.00</b></div>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Add transaction</h2>
+      <form id="txForm">
+        <select name="type"><option value="expense">Expense</option><option value="income">Income</option></select>
+        <input name="amount" type="number" step="0.01" min="0.01" placeholder="Amount" required>
+        <input name="category" placeholder="Category (e.g. food)" required>
+        <input name="date" type="date" required>
+        <input name="note" placeholder="Note (optional)">
+        <button>Add</button>
+      </form>
+      <div class="error" id="txError"></div>
+
+      <h2 style="margin-top:12px">Set monthly budget</h2>
+      <form id="budgetForm">
+        <input name="category" placeholder="Category" required>
+        <input name="limit" type="number" step="0.01" min="0.01" placeholder="Limit" required>
+        <button>Save</button>
+      </form>
+      <div class="error" id="budgetError"></div>
+    </section>
+
+    <section class="card">
+      <h2>Spending by category</h2>
+      <div id="categories" class="muted">No spending this month yet.</div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Transactions</h2>
+    <table>
+      <thead><tr><th>Date</th><th>Category</th><th>Note</th><th>Amount</th><th></th></tr></thead>
+      <tbody id="txBody"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const money = (n) => (n < 0 ? "-$" : "$") + Math.abs(n).toFixed(2);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+async function api(path, options = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const detail = Array.isArray(body.detail) ? body.detail.map((d) => d.msg).join("; ") : body.detail;
+    throw new Error(detail || `Request failed (${res.status})`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+async function refresh() {
+  const month = $("month").value;
+  const [summary, txs] = await Promise.all([
+    api(`/api/summary?month=${month}`),
+    api(`/api/transactions?month=${month}&limit=200`),
+  ]);
+
+  $("income").textContent = money(summary.income);
+  $("expenses").textContent = money(summary.expenses);
+  $("balance").textContent = money(summary.balance);
+  $("balance").className = summary.balance < 0 ? "expense" : "income";
+
+  $("categories").innerHTML = summary.categories.length ? summary.categories.map((c) => {
+    const pct = c.budget ? Math.min(100, (c.spent / c.budget) * 100) : 100;
+    const right = c.budget ? `${money(c.spent)} of ${money(c.budget)}` : money(c.spent);
+    return `<div class="row"><b>${esc(c.category)}</b><span class="${c.over_budget ? "expense" : ""}">${right}${c.over_budget ? " · over budget" : ""}</span></div>
+            <div class="bar"><i class="${c.over_budget ? "over" : ""}" style="width:${pct}%"></i></div>`;
+  }).join("") : "No spending this month yet.";
+
+  $("txBody").innerHTML = txs.length ? txs.map((t) => `
+    <tr><td>${t.date}</td><td>${esc(t.category)}</td><td class="muted">${esc(t.note)}</td>
+        <td class="${t.type}">${t.type === "expense" ? "-" : "+"}${money(t.amount)}</td>
+        <td><button class="link" data-id="${t.id}" title="Delete">✕</button></td></tr>`).join("")
+    : `<tr><td colspan="5" class="muted">No transactions this month.</td></tr>`;
+}
+
+$("txForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await api("/api/transactions", { method: "POST", body: JSON.stringify({
+      type: f.get("type"), amount: Number(f.get("amount")), category: f.get("category"),
+      date: f.get("date"), note: f.get("note") }) });
+    e.target.amount.value = ""; e.target.note.value = ""; $("txError").textContent = "";
+    $("month").value = f.get("date").slice(0, 7);
+    refresh();
+  } catch (err) { $("txError").textContent = err.message; }
+});
+
+$("budgetForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await api(`/api/budgets/${encodeURIComponent(f.get("category"))}`, { method: "PUT",
+      body: JSON.stringify({ monthly_limit: Number(f.get("limit")) }) });
+    e.target.reset(); $("budgetError").textContent = "";
+    refresh();
+  } catch (err) { $("budgetError").textContent = err.message; }
+});
+
+$("txBody").addEventListener("click", async (e) => {
+  const id = e.target.dataset.id;
+  if (id) { await api(`/api/transactions/${id}`, { method: "DELETE" }); refresh(); }
+});
+
+const today = new Date().toISOString().slice(0, 10);
+$("month").value = today.slice(0, 7);
+$("txForm").date.value = today;
+$("month").addEventListener("change", refresh);
+refresh();
+</script>
+</body>
+</html>
